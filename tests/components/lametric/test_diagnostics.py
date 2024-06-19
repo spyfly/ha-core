@@ -16,6 +16,50 @@ async def test_diagnostics(
     snapshot: SnapshotAssertion,
 ) -> None:
     """Test diagnostics."""
+    assert await get_diagnostics_for_config_entry(
+        hass, hass_client, init_integration
+    ) == {
+        "device_id": REDACTED,
+        "name": REDACTED,
+        "serial_number": REDACTED,
+        "os_version": "2.2.2",
+        "mode": "auto",
+        "model": "LM 37X8",
+        "audio": {
+            "volume": 100,
+            "volume_range": {"range_min": 0, "range_max": 100},
+            "volume_limit": {"range_min": 0, "range_max": 100},
+        },
+        "bluetooth": {
+            "available": True,
+            "name": REDACTED,
+            "active": False,
+            "discoverable": True,
+            "pairable": True,
+            "address": "AA:BB:CC:DD:EE:FF",
+        },
+        "display": {
+            "brightness": 100,
+            "brightness_mode": "auto",
+            "width": 37,
+            "height": 8,
+            "display_type": "mixed",
+            "on": None,
+            "screensaver": {"enabled": False},
+        },
+        "wifi": {
+            "active": True,
+            "mac": "AA:BB:CC:DD:EE:FF",
+            "available": True,
+            "encryption": "WPA",
+            "ssid": REDACTED,
+            "ip": "127.0.0.1",
+            "mode": "dhcp",
+            "netmask": "255.255.255.0",
+            "rssi": 21,
+        },
+    }
+
     assert (
         await get_diagnostics_for_config_entry(hass, hass_client, init_integration)
         == snapshot

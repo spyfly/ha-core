@@ -29,7 +29,7 @@ class LaMetricSwitchEntityDescription(SwitchEntityDescription):
     set_fn: Callable[[LaMetricDevice, bool], Awaitable[Any]]
 
 
-SWITCHES = [
+switches = [
     LaMetricSwitchEntityDescription(
         key="bluetooth",
         translation_key="bluetooth",
@@ -48,12 +48,25 @@ async def async_setup_entry(
 ) -> None:
     """Set up LaMetric switch based on a config entry."""
     coordinator: LaMetricDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    if coordinator.data.model == "sa5":
+        switches.append(
+            LaMetricSwitchEntityDescription(
+                key="on",
+                translation_key="on",
+                icon="mdi:monitor",
+                available_fn=lambda device: device.display.on is not None,
+                is_on_fn=lambda device: device.display.on is True,
+                set_fn=lambda api, on: api.display(on=on),
+            )
+        )
+
     async_add_entities(
         LaMetricSwitchEntity(
             coordinator=coordinator,
             description=description,
         )
-        for description in SWITCHES
+        for description in switches
     )
 
 
