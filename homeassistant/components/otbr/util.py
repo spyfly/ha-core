@@ -1,10 +1,13 @@
 """Utility functions for the Open Thread Border Router integration."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 import dataclasses
 from functools import wraps
-from typing import Any, Concatenate, ParamSpec, TypeVar, cast
+import logging
+import random
+from typing import Any, Concatenate, cast
 
 import python_otbr_api
 from python_otbr_api import PENDING_DATASET_DELAY_TIMER, tlv_parser
@@ -13,7 +16,7 @@ from python_otbr_api.tlv_parser import MeshcopTLVType
 
 from homeassistant.components.homeassistant_hardware.silabs_multiprotocol_addon import (
     MultiprotocolAddonManager,
-    get_addon_manager,
+    get_multiprotocol_addon_manager,
     is_multiprotocol_url,
     multi_pan_addon_using_device,
 )
@@ -24,8 +27,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN
 
-_R = TypeVar("_R")
-_P = ParamSpec("_P")
+_LOGGER = logging.getLogger(__name__)
 
 INFO_URL_SKY_CONNECT = (
     "https://skyconnect.home-assistant.io/multiprotocol-channel-missmatch"
@@ -45,8 +47,19 @@ INSECURE_PASSPHRASES = (
 )
 
 
-def _handle_otbr_error(
-    func: Callable[Concatenate[OTBRData, _P], Coroutine[Any, Any, _R]]
+def compose_default_network_name(pan_id: int) -> str:
+    """Generate a default network name."""
+    return f"ha-thread-{pan_id:04x}"
+
+
+def generate_random_pan_id() -> int:
+    """Generate a random PAN ID."""
+    # PAN ID is 2 bytes, 0xffff is reserved for broadcast
+    return random.randint(0, 0xFFFE)
+
+
+def _handle_otbr_error[**_P, _R](
+    func: Callable[Concatenate[OTBRData, _P], Coroutine[Any, Any, _R]],
 ) -> Callable[Concatenate[OTBRData, _P], Coroutine[Any, Any, _R]]:
     """Handle OTBR errors."""
 
@@ -67,6 +80,25 @@ class OTBRData:
     url: str
     api: python_otbr_api.OTBR
     entry_id: str
+
+    @_handle_otbr_error
+    async def factory_reset(self) -> None:
+        """Reset the router."""
+        try:
+            await self.api.factory_reset()
+        except python_otbr_api.FactoryResetNotSupportedError:
+            _LOGGER.warning(
+                "OTBR does not support factory reset, attempting to delete dataset"
+            )
+            await self.delete_active_dataset()
+
+    @_handle_otbr_error
+    async def get_border_agent_id(self) -> bytes | None:
+        """Get the border agent ID or None if not supported by the router."""
+        try:
+            return await self.api.get_border_agent_id()
+        except python_otbr_api.GetBorderAgentIdNotSupportedError:
+            return None
 
     @_handle_otbr_error
     async def set_enabled(self, enabled: bool) -> None:
@@ -96,6 +128,11 @@ class OTBRData:
         return await self.api.create_active_dataset(dataset)
 
     @_handle_otbr_error
+    async def delete_active_dataset(self) -> None:
+        """Delete the active operational dataset."""
+        return await self.api.delete_active_dataset()
+
+    @_handle_otbr_error
     async def set_active_dataset_tlvs(self, dataset: bytes) -> None:
         """Set current active operational dataset in TLVS format."""
         await self.api.set_active_dataset_tlvs(dataset)
@@ -119,8 +156,10 @@ async def get_allowed_channel(hass: HomeAssistant, otbr_url: str) -> int | None:
         # The OTBR is not sharing the radio, no restriction
         return None
 
-    addon_manager: MultiprotocolAddonManager = await get_addon_manager(hass)
-    return addon_manager.async_get_channel()
+    multipan_manager: MultiprotocolAddonManager = await get_multiprotocol_addon_manager(
+        hass
+    )
+    return multipan_manager.async_get_channel()
 
 
 async def _warn_on_channel_collision(

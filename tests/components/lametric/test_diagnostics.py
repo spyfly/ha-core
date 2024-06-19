@@ -1,6 +1,7 @@
 """Tests for the diagnostics data provided by the LaMetric integration."""
 
-from homeassistant.components.diagnostics import REDACTED
+from syrupy import SnapshotAssertion
+
 from homeassistant.core import HomeAssistant
 
 from tests.common import MockConfigEntry
@@ -12,6 +13,7 @@ async def test_diagnostics(
     hass: HomeAssistant,
     hass_client: ClientSessionGenerator,
     init_integration: MockConfigEntry,
+    snapshot: SnapshotAssertion,
 ) -> None:
     """Test diagnostics."""
     assert await get_diagnostics_for_config_entry(
@@ -57,3 +59,8 @@ async def test_diagnostics(
             "rssi": 21,
         },
     }
+
+    assert (
+        await get_diagnostics_for_config_entry(hass, hass_client, init_integration)
+        == snapshot
+    )

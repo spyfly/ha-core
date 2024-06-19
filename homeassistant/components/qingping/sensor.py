@@ -1,4 +1,5 @@
 """Support for Qingping sensors."""
+
 from __future__ import annotations
 
 from qingping_ble import (
@@ -155,11 +156,15 @@ async def async_setup_entry(
             QingpingBluetoothSensorEntity, async_add_entities
         )
     )
-    entry.async_on_unload(coordinator.async_register_processor(processor))
+    entry.async_on_unload(
+        coordinator.async_register_processor(processor, SensorEntityDescription)
+    )
 
 
 class QingpingBluetoothSensorEntity(
-    PassiveBluetoothProcessorEntity[PassiveBluetoothDataProcessor[float | int | None]],
+    PassiveBluetoothProcessorEntity[
+        PassiveBluetoothDataProcessor[float | int | None, SensorUpdate]
+    ],
     SensorEntity,
 ):
     """Representation of a Qingping sensor."""

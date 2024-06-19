@@ -1,4 +1,5 @@
 """Utilities used by insteon component."""
+
 from __future__ import annotations
 
 import asyncio
@@ -64,6 +65,8 @@ from .const import (
     SIGNAL_PRINT_ALDB,
     SIGNAL_REMOVE_DEVICE_OVERRIDE,
     SIGNAL_REMOVE_ENTITY,
+    SIGNAL_REMOVE_HA_DEVICE,
+    SIGNAL_REMOVE_INSTEON_DEVICE,
     SIGNAL_REMOVE_X10_DEVICE,
     SIGNAL_SAVE_DEVICES,
     SRV_ADD_ALL_LINK,
@@ -115,8 +118,8 @@ def add_insteon_events(hass: HomeAssistant, device: Device) -> None:
     """Register Insteon device events."""
 
     @callback
-    def async_fire_group_on_off_event(
-        name: str, address: Address, group: int, button: str
+    def async_fire_insteon_event(
+        name: str, address: Address, group: int, button: str | None = None
     ):
         # Firing an event when a button is pressed.
         if button and button[-2] == "_":
@@ -140,12 +143,15 @@ def add_insteon_events(hass: HomeAssistant, device: Device) -> None:
         _LOGGER.debug("Firing event %s with %s", event, schema)
         hass.bus.async_fire(event, schema)
 
+    if str(device.address).startswith("X10"):
+        return
+
     for name_or_group, event in device.events.items():
         if isinstance(name_or_group, int):
-            for _, event in device.events[name_or_group].items():
-                _register_event(event, async_fire_group_on_off_event)
+            for event in device.events[name_or_group].values():
+                _register_event(event, async_fire_insteon_event)
         else:
-            _register_event(event, async_fire_group_on_off_event)
+            _register_event(event, async_fire_insteon_event)
 
 
 def register_new_device_callback(hass):
@@ -166,15 +172,16 @@ def register_new_device_callback(hass):
         await device.async_status()
         platforms = get_device_platforms(device)
         for platform in platforms:
+            groups = get_device_platform_groups(device, platform)
             signal = f"{SIGNAL_ADD_ENTITIES}_{platform}"
-            dispatcher_send(hass, signal, {"address": device.address})
+            dispatcher_send(hass, signal, {"address": device.address, "groups": groups})
         add_insteon_events(hass, device)
 
     devices.subscribe(async_new_insteon_device, force_strong_ref=True)
 
 
 @callback
-def async_register_services(hass):
+def async_register_services(hass):  # noqa: C901
     """Register services used by insteon component."""
 
     save_lock = asyncio.Lock()
@@ -265,14 +272,14 @@ def async_register_services(hass):
     async def async_add_device_override(override):
         """Remove an Insten device and associated entities."""
         address = Address(override[CONF_ADDRESS])
-        await async_remove_device(address)
+        await async_remove_ha_device(address)
         devices.set_id(address, override[CONF_CAT], override[CONF_SUBCAT], 0)
         await async_srv_save_devices()
 
     async def async_remove_device_override(address):
         """Remove an Insten device and associated entities."""
         address = Address(address)
-        await async_remove_device(address)
+        await async_remove_ha_device(address)
         devices.set_id(address, None, None, None)
         await devices.async_identify_device(address)
         await async_srv_save_devices()
@@ -299,9 +306,9 @@ def async_register_services(hass):
         """Remove an X10 device and associated entities."""
         address = create_x10_address(housecode, unitcode)
         devices.pop(address)
-        await async_remove_device(address)
+        await async_remove_ha_device(address)
 
-    async def async_remove_device(address):
+    async def async_remove_ha_device(address: Address, remove_all_refs: bool = False):
         """Remove the device and all entities from hass."""
         signal = f"{address.id}_{SIGNAL_REMOVE_ENTITY}"
         async_dispatcher_send(hass, signal)
@@ -309,6 +316,15 @@ def async_register_services(hass):
         device = dev_registry.async_get_device(identifiers={(DOMAIN, str(address))})
         if device:
             dev_registry.async_remove_device(device.id)
+
+    async def async_remove_insteon_device(
+        address: Address, remove_all_refs: bool = False
+    ):
+        """Remove the underlying Insteon device from the network."""
+        await devices.async_remove_device(
+            address=address, force=False, remove_all_refs=remove_all_refs
+        )
+        await async_srv_save_devices()
 
     hass.services.async_register(
         DOMAIN, SRV_ADD_ALL_LINK, async_srv_add_all_link, schema=ADD_ALL_LINK_SCHEMA
@@ -363,6 +379,10 @@ def async_register_services(hass):
     )
     async_dispatcher_connect(hass, SIGNAL_ADD_X10_DEVICE, async_add_x10_device)
     async_dispatcher_connect(hass, SIGNAL_REMOVE_X10_DEVICE, async_remove_x10_device)
+    async_dispatcher_connect(hass, SIGNAL_REMOVE_HA_DEVICE, async_remove_ha_device)
+    async_dispatcher_connect(
+        hass, SIGNAL_REMOVE_INSTEON_DEVICE, async_remove_insteon_device
+    )
     _LOGGER.debug("Insteon Services registered")
 
 
@@ -384,7 +404,7 @@ def print_aldb_to_log(aldb):
         hwm = "Y" if rec.is_high_water_mark else "N"
         log_msg = (
             f" {rec.mem_addr:04x}    {in_use:s}     {mode:s}   {hwm:s}    "
-            f"{rec.group:3d} {str(rec.target):s}   {rec.data1:3d}   "
+            f"{rec.group:3d} {rec.target!s:s}   {rec.data1:3d}   "
             f"{rec.data2:3d}   {rec.data3:3d}"
         )
         logger.info(log_msg)

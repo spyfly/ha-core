@@ -1,4 +1,5 @@
 """Const file for the MyBMW integration."""
+
 from homeassistant.const import UnitOfLength, UnitOfVolume
 
 DOMAIN = "bmw_connected_drive"
@@ -20,4 +21,10 @@ UNIT_MAP = {
     "MILES": UnitOfLength.MILES,
     "LITERS": UnitOfVolume.LITERS,
     "GALLONS": UnitOfVolume.GALLONS,
+}
+
+SCAN_INTERVALS = {
+    "china": 300,
+    "north_america": 600,
+    "rest_of_world": 300,
 }

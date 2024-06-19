@@ -1,6 +1,6 @@
 """Test the thread websocket API."""
 
-from unittest.mock import ANY, AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 
 import pytest
 from zeroconf.asyncio import AsyncServiceInfo
@@ -16,14 +16,17 @@ from . import (
     ROUTER_DISCOVERY_HASS_BAD_DATA,
     ROUTER_DISCOVERY_HASS_BAD_STATE_BITMAP,
     ROUTER_DISCOVERY_HASS_MISSING_DATA,
-    ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA,
+    ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA_XA,
+    ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA_XP,
     ROUTER_DISCOVERY_HASS_NO_ACTIVE_TIMESTAMP,
     ROUTER_DISCOVERY_HASS_NO_STATE_BITMAP,
     ROUTER_DISCOVERY_HASS_STATE_BITMAP_NOT_ACTIVE,
 )
 
 
-async def test_discover_routers(hass: HomeAssistant, mock_async_zeroconf: None) -> None:
+async def test_discover_routers(
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock
+) -> None:
     """Test discovering thread routers."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()
     mock_async_zeroconf.async_remove_service_listener = AsyncMock()
@@ -72,6 +75,7 @@ async def test_discover_routers(hass: HomeAssistant, mock_async_zeroconf: None) 
         "aeeb2f594b570bbf",
         discovery.ThreadRouterDiscoveryData(
             addresses=["192.168.0.115"],
+            border_agent_id="230c6a1ac57f6f4be262acf32e5ef52c",
             brand="homeassistant",
             extended_address="aeeb2f594b570bbf",
             extended_pan_id="e60fc7c186212ce5",
@@ -98,6 +102,7 @@ async def test_discover_routers(hass: HomeAssistant, mock_async_zeroconf: None) 
         "f6a99b425a67abed",
         discovery.ThreadRouterDiscoveryData(
             addresses=["192.168.0.124"],
+            border_agent_id="bc3740c3e963aa8735bebecd7cc503c7",
             brand="google",
             extended_address="f6a99b425a67abed",
             extended_pan_id="9e75e256f61409a3",
@@ -148,9 +153,9 @@ async def test_discover_routers(hass: HomeAssistant, mock_async_zeroconf: None) 
     ],
 )
 async def test_discover_routers_unconfigured(
-    hass: HomeAssistant, mock_async_zeroconf: None, data, unconfigured
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock, data, unconfigured
 ) -> None:
-    """Test discovering thread routers with bad or missing vendor mDNS data."""
+    """Test discovering thread routers and setting the unconfigured flag."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()
     mock_async_zeroconf.async_remove_service_listener = AsyncMock()
     mock_async_zeroconf.async_get_service_info = AsyncMock()
@@ -176,6 +181,7 @@ async def test_discover_routers_unconfigured(
         "aeeb2f594b570bbf",
         discovery.ThreadRouterDiscoveryData(
             addresses=["192.168.0.115"],
+            border_agent_id="230c6a1ac57f6f4be262acf32e5ef52c",
             brand="homeassistant",
             extended_address="aeeb2f594b570bbf",
             extended_pan_id="e60fc7c186212ce5",
@@ -190,10 +196,10 @@ async def test_discover_routers_unconfigured(
 
 
 @pytest.mark.parametrize(
-    "data", (ROUTER_DISCOVERY_HASS_BAD_DATA, ROUTER_DISCOVERY_HASS_MISSING_DATA)
+    "data", [ROUTER_DISCOVERY_HASS_BAD_DATA, ROUTER_DISCOVERY_HASS_MISSING_DATA]
 )
-async def test_discover_routers_bad_data(
-    hass: HomeAssistant, mock_async_zeroconf: None, data
+async def test_discover_routers_bad_or_missing_optional_data(
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock, data
 ) -> None:
     """Test discovering thread routers with bad or missing vendor mDNS data."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()
@@ -221,6 +227,7 @@ async def test_discover_routers_bad_data(
         "aeeb2f594b570bbf",
         discovery.ThreadRouterDiscoveryData(
             addresses=["192.168.0.115"],
+            border_agent_id="230c6a1ac57f6f4be262acf32e5ef52c",
             brand=None,
             extended_address="aeeb2f594b570bbf",
             extended_pan_id="e60fc7c186212ce5",
@@ -234,8 +241,15 @@ async def test_discover_routers_bad_data(
     )
 
 
-async def test_discover_routers_missing_mandatory_data(
-    hass: HomeAssistant, mock_async_zeroconf: None
+@pytest.mark.parametrize(
+    "service",
+    [
+        ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA_XA,
+        ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA_XP,
+    ],
+)
+async def test_discover_routers_bad_or_missing_mandatory_data(
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock, service
 ) -> None:
     """Test discovering thread routers with missing mandatory mDNS data."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()
@@ -257,19 +271,19 @@ async def test_discover_routers_missing_mandatory_data(
 
     # Discover a service with missing mandatory data
     mock_async_zeroconf.async_get_service_info.return_value = AsyncServiceInfo(
-        **ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA
+        **service
     )
     listener.add_service(
         None,
-        ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA["type_"],
-        ROUTER_DISCOVERY_HASS_MISSING_MANDATORY_DATA["name"],
+        service["type_"],
+        service["name"],
     )
     await hass.async_block_till_done()
     router_discovered_removed.assert_not_called()
 
 
 async def test_discover_routers_get_service_info_fails(
-    hass: HomeAssistant, mock_async_zeroconf: None
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock
 ) -> None:
     """Test discovering thread routers with invalid mDNS data."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()
@@ -299,7 +313,7 @@ async def test_discover_routers_get_service_info_fails(
 
 
 async def test_discover_routers_update_unchanged(
-    hass: HomeAssistant, mock_async_zeroconf: None
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock
 ) -> None:
     """Test discovering thread routers with identical mDNS data in update."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()
@@ -341,7 +355,7 @@ async def test_discover_routers_update_unchanged(
 
 
 async def test_discover_routers_stop_twice(
-    hass: HomeAssistant, mock_async_zeroconf: None
+    hass: HomeAssistant, mock_async_zeroconf: MagicMock
 ) -> None:
     """Test discovering thread routers stopping discovery twice."""
     mock_async_zeroconf.async_add_service_listener = AsyncMock()

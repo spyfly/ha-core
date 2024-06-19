@@ -1,88 +1,87 @@
 """Plugwise Select component for Home Assistant."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 
-from plugwise import DeviceData, Smile
+from plugwise import Smile
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from . import PlugwiseConfigEntry
+from .const import SelectOptionsType, SelectType
 from .coordinator import PlugwiseDataUpdateCoordinator
 from .entity import PlugwiseEntity
 
 
-@dataclass
-class PlugwiseSelectDescriptionMixin:
-    """Mixin values for Plugwise Select entities."""
+@dataclass(frozen=True, kw_only=True)
+class PlugwiseSelectEntityDescription(SelectEntityDescription):
+    """Class describing Plugwise Select entities."""
 
-    command: Callable[[Smile, str, str], Awaitable[Any]]
-    value_fn: Callable[[DeviceData], str]
-    options_fn: Callable[[DeviceData], list[str]]
-
-
-@dataclass
-class PlugwiseSelectEntityDescription(
-    SelectEntityDescription, PlugwiseSelectDescriptionMixin
-):
-    """Class describing Plugwise Number entities."""
+    command: Callable[[Smile, str, str], Awaitable[None]]
+    key: SelectType
+    options_key: SelectOptionsType
 
 
 SELECT_TYPES = (
     PlugwiseSelectEntityDescription(
         key="select_schedule",
         translation_key="select_schedule",
-        icon="mdi:calendar-clock",
-        command=lambda api, loc, opt: api.set_schedule_state(loc, opt, STATE_ON),
-        value_fn=lambda data: data["selected_schedule"],
-        options_fn=lambda data: data.get("available_schedules"),
+        command=lambda api, loc, opt: api.set_schedule_state(loc, STATE_ON, opt),
+        options_key="available_schedules",
     ),
     PlugwiseSelectEntityDescription(
         key="select_regulation_mode",
         translation_key="regulation_mode",
-        icon="mdi:hvac",
         entity_category=EntityCategory.CONFIG,
         command=lambda api, loc, opt: api.set_regulation_mode(opt),
-        value_fn=lambda data: data["regulation_mode"],
-        options_fn=lambda data: data.get("regulation_modes"),
+        options_key="regulation_modes",
     ),
     PlugwiseSelectEntityDescription(
         key="select_dhw_mode",
         translation_key="dhw_mode",
-        icon="mdi:shower",
         entity_category=EntityCategory.CONFIG,
         command=lambda api, loc, opt: api.set_dhw_mode(opt),
-        value_fn=lambda data: data["dhw_mode"],
-        options_fn=lambda data: data.get("dhw_modes"),
+        options_key="dhw_modes",
+    ),
+    PlugwiseSelectEntityDescription(
+        key="select_gateway_mode",
+        translation_key="gateway_mode",
+        entity_category=EntityCategory.CONFIG,
+        command=lambda api, loc, opt: api.set_gateway_mode(opt),
+        options_key="gateway_modes",
     ),
 )
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    entry: PlugwiseConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Smile selector from a config entry."""
-    coordinator: PlugwiseDataUpdateCoordinator = hass.data[DOMAIN][
-        config_entry.entry_id
-    ]
+    coordinator = entry.runtime_data
 
-    entities: list[PlugwiseSelectEntity] = []
-    for device_id, device in coordinator.data.devices.items():
-        for description in SELECT_TYPES:
-            if (options := description.options_fn(device)) and len(options) > 1:
-                entities.append(
-                    PlugwiseSelectEntity(coordinator, device_id, description)
-                )
+    @callback
+    def _add_entities() -> None:
+        """Add Entities."""
+        if not coordinator.new_devices:
+            return
 
-    async_add_entities(entities)
+        async_add_entities(
+            PlugwiseSelectEntity(coordinator, device_id, description)
+            for device_id, device in coordinator.data.devices.items()
+            for description in SELECT_TYPES
+            if description.options_key in device
+        )
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_entities))
+
+    _add_entities()
 
 
 class PlugwiseSelectEntity(PlugwiseEntity, SelectEntity):
@@ -104,12 +103,12 @@ class PlugwiseSelectEntity(PlugwiseEntity, SelectEntity):
     @property
     def current_option(self) -> str:
         """Return the selected entity option to represent the entity state."""
-        return self.entity_description.value_fn(self.device)
+        return self.device[self.entity_description.key]
 
     @property
     def options(self) -> list[str]:
-        """Return the selectable entity options."""
-        return self.entity_description.options_fn(self.device)
+        """Return the available select-options."""
+        return self.device[self.entity_description.options_key]
 
     async def async_select_option(self, option: str) -> None:
         """Change to the selected entity option."""

@@ -1,4 +1,5 @@
 """Support for BTHome binary sensors."""
+
 from __future__ import annotations
 
 from bthome_ble import (
@@ -144,7 +145,7 @@ BINARY_SENSOR_DESCRIPTIONS = {
 
 def sensor_update_to_bluetooth_data_update(
     sensor_update: SensorUpdate,
-) -> PassiveBluetoothDataUpdate:
+) -> PassiveBluetoothDataUpdate[bool | None]:
     """Convert a binary sensor update to a bluetooth data update."""
     return PassiveBluetoothDataUpdate(
         devices={
@@ -186,11 +187,13 @@ async def async_setup_entry(
             BTHomeBluetoothBinarySensorEntity, async_add_entities
         )
     )
-    entry.async_on_unload(coordinator.async_register_processor(processor))
+    entry.async_on_unload(
+        coordinator.async_register_processor(processor, BinarySensorEntityDescription)
+    )
 
 
 class BTHomeBluetoothBinarySensorEntity(
-    PassiveBluetoothProcessorEntity[BTHomePassiveBluetoothDataProcessor],
+    PassiveBluetoothProcessorEntity[BTHomePassiveBluetoothDataProcessor[bool | None]],
     BinarySensorEntity,
 ):
     """Representation of a BTHome binary sensor."""
@@ -203,7 +206,4 @@ class BTHomeBluetoothBinarySensorEntity(
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        coordinator: BTHomePassiveBluetoothProcessorCoordinator = (
-            self.processor.coordinator
-        )
-        return coordinator.device_data.sleepy_device or super().available
+        return self.processor.coordinator.sleepy_device or super().available

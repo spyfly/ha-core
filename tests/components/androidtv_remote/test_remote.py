@@ -1,4 +1,5 @@
 """Tests for the Android TV Remote remote platform."""
+
 from unittest.mock import MagicMock, call
 
 from androidtvremote2 import ConnectionClosed
@@ -48,7 +49,7 @@ async def test_remote_toggles(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.LOADED
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         "remote",
         "turn_off",
         {"entity_id": REMOTE_ENTITY},
@@ -58,7 +59,7 @@ async def test_remote_toggles(
 
     mock_api.send_key_command.assert_called_with("POWER", "SHORT")
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         "remote",
         "turn_on",
         {"entity_id": REMOTE_ENTITY},
@@ -69,7 +70,7 @@ async def test_remote_toggles(
     mock_api.send_key_command.assert_called_with("POWER", "SHORT")
     assert mock_api.send_key_command.call_count == 2
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         "remote",
         "turn_on",
         {"entity_id": REMOTE_ENTITY, "activity": "activity1"},
@@ -89,7 +90,7 @@ async def test_remote_send_command(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.LOADED
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         "remote",
         "send_command",
         {
@@ -112,7 +113,7 @@ async def test_remote_send_command_multiple(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.LOADED
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         "remote",
         "send_command",
         {
@@ -136,7 +137,7 @@ async def test_remote_send_command_with_hold_secs(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.LOADED
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         "remote",
         "send_command",
         {

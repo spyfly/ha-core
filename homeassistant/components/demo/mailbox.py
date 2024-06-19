@@ -1,4 +1,5 @@
 """Support for a demo mailbox."""
+
 from __future__ import annotations
 
 from hashlib import sha1
@@ -33,7 +34,7 @@ class DemoMailbox(Mailbox):
         super().__init__(hass, name)
         self._messages: dict[str, dict[str, Any]] = {}
         txt = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
-        for idx in range(0, 10):
+        for idx in range(10):
             msgtime = int(
                 dt_util.as_timestamp(dt_util.utcnow()) - 3600 * 24 * (10 - idx)
             )
@@ -78,7 +79,7 @@ class DemoMailbox(Mailbox):
         """Return a list of the current messages."""
         return sorted(
             self._messages.values(),
-            key=lambda item: item["info"]["origtime"],  # type: ignore[no-any-return]
+            key=lambda item: item["info"]["origtime"],
             reverse=True,
         )
 

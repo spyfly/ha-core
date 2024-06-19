@@ -1,7 +1,10 @@
 """The Fully Kiosk Browser integration."""
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 from .coordinator import FullyKioskDataUpdateCoordinator
@@ -16,6 +19,16 @@ PLATFORMS = [
     Platform.SWITCH,
 ]
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up Fully Kiosk Browser."""
+
+    await async_setup_services(hass)
+
+    return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Fully Kiosk Browser from a config entry."""
@@ -27,8 +40,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_update_listeners()
-
-    await async_setup_services(hass)
 
     return True
 

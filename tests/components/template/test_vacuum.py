@@ -1,4 +1,5 @@
 """The tests for the Template vacuum platform."""
+
 import pytest
 
 from homeassistant import setup
@@ -11,7 +12,8 @@ from homeassistant.components.vacuum import (
     STATE_RETURNING,
 )
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_component import async_update_entity
 
 from tests.common import assert_setup_component
@@ -317,37 +319,43 @@ async def test_unique_id(hass: HomeAssistant, start_ha) -> None:
 
 
 async def test_unused_services(hass: HomeAssistant) -> None:
-    """Test calling unused services should not crash."""
+    """Test calling unused services raises."""
     await _register_basic_vacuum(hass)
 
     # Pause vacuum
-    await common.async_pause(hass, _TEST_VACUUM)
+    with pytest.raises(HomeAssistantError):
+        await common.async_pause(hass, _TEST_VACUUM)
     await hass.async_block_till_done()
 
     # Stop vacuum
-    await common.async_stop(hass, _TEST_VACUUM)
+    with pytest.raises(HomeAssistantError):
+        await common.async_stop(hass, _TEST_VACUUM)
     await hass.async_block_till_done()
 
     # Return vacuum to base
-    await common.async_return_to_base(hass, _TEST_VACUUM)
+    with pytest.raises(HomeAssistantError):
+        await common.async_return_to_base(hass, _TEST_VACUUM)
     await hass.async_block_till_done()
 
     # Spot cleaning
-    await common.async_clean_spot(hass, _TEST_VACUUM)
+    with pytest.raises(HomeAssistantError):
+        await common.async_clean_spot(hass, _TEST_VACUUM)
     await hass.async_block_till_done()
 
     # Locate vacuum
-    await common.async_locate(hass, _TEST_VACUUM)
+    with pytest.raises(HomeAssistantError):
+        await common.async_locate(hass, _TEST_VACUUM)
     await hass.async_block_till_done()
 
     # Set fan's speed
-    await common.async_set_fan_speed(hass, "medium", _TEST_VACUUM)
+    with pytest.raises(HomeAssistantError):
+        await common.async_set_fan_speed(hass, "medium", _TEST_VACUUM)
     await hass.async_block_till_done()
 
     _verify(hass, STATE_UNKNOWN, None)
 
 
-async def test_state_services(hass: HomeAssistant, calls) -> None:
+async def test_state_services(hass: HomeAssistant, calls: list[ServiceCall]) -> None:
     """Test state services."""
     await _register_components(hass)
 
@@ -396,7 +404,9 @@ async def test_state_services(hass: HomeAssistant, calls) -> None:
     assert calls[-1].data["caller"] == _TEST_VACUUM
 
 
-async def test_clean_spot_service(hass: HomeAssistant, calls) -> None:
+async def test_clean_spot_service(
+    hass: HomeAssistant, calls: list[ServiceCall]
+) -> None:
     """Test clean spot service."""
     await _register_components(hass)
 
@@ -411,7 +421,7 @@ async def test_clean_spot_service(hass: HomeAssistant, calls) -> None:
     assert calls[-1].data["caller"] == _TEST_VACUUM
 
 
-async def test_locate_service(hass: HomeAssistant, calls) -> None:
+async def test_locate_service(hass: HomeAssistant, calls: list[ServiceCall]) -> None:
     """Test locate service."""
     await _register_components(hass)
 
@@ -426,7 +436,7 @@ async def test_locate_service(hass: HomeAssistant, calls) -> None:
     assert calls[-1].data["caller"] == _TEST_VACUUM
 
 
-async def test_set_fan_speed(hass: HomeAssistant, calls) -> None:
+async def test_set_fan_speed(hass: HomeAssistant, calls: list[ServiceCall]) -> None:
     """Test set valid fan speed."""
     await _register_components(hass)
 
@@ -453,7 +463,9 @@ async def test_set_fan_speed(hass: HomeAssistant, calls) -> None:
     assert calls[-1].data["option"] == "medium"
 
 
-async def test_set_invalid_fan_speed(hass: HomeAssistant, calls) -> None:
+async def test_set_invalid_fan_speed(
+    hass: HomeAssistant, calls: list[ServiceCall]
+) -> None:
     """Test set invalid fan speed when fan has valid speed."""
     await _register_components(hass)
 

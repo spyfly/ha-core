@@ -1,7 +1,8 @@
 """Constants for the switchbot integration."""
-from switchbot import SwitchbotModel
 
-from homeassistant.backports.enum import StrEnum
+from enum import StrEnum
+
+from switchbot import SwitchbotModel
 
 DOMAIN = "switchbot"
 MANUFACTURER = "switchbot"
@@ -26,6 +27,7 @@ class SupportedModels(StrEnum):
     HUMIDIFIER = "humidifier"
     LOCK = "lock"
     BLIND_TILT = "blind_tilt"
+    HUB2 = "hub2"
 
 
 CONNECTABLE_SUPPORTED_MODEL_TYPES = {
@@ -38,10 +40,12 @@ CONNECTABLE_SUPPORTED_MODEL_TYPES = {
     SwitchbotModel.HUMIDIFIER: SupportedModels.HUMIDIFIER,
     SwitchbotModel.LOCK: SupportedModels.LOCK,
     SwitchbotModel.BLIND_TILT: SupportedModels.BLIND_TILT,
+    SwitchbotModel.HUB2: SupportedModels.HUB2,
 }
 
 NON_CONNECTABLE_SUPPORTED_MODEL_TYPES = {
     SwitchbotModel.METER: SupportedModels.HYGROMETER,
+    SwitchbotModel.IO_METER: SupportedModels.HYGROMETER,
     SwitchbotModel.CONTACT_SENSOR: SupportedModels.CONTACT,
     SwitchbotModel.MOTION_SENSOR: SupportedModels.MOTION,
 }

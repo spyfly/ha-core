@@ -1,15 +1,16 @@
 """Test fixtures for the Home Assistant SkyConnect integration."""
-from collections.abc import Generator
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from typing_extensions import Generator
 
 
 @pytest.fixture(name="mock_usb_serial_by_id", autouse=True)
-def mock_usb_serial_by_id_fixture() -> Generator[MagicMock, None, None]:
+def mock_usb_serial_by_id_fixture() -> Generator[MagicMock]:
     """Mock usb serial by id."""
     with patch(
-        "homeassistant.components.zwave_js.config_flow.usb.get_serial_by_id"
+        "homeassistant.components.zha.config_flow.usb.get_serial_by_id"
     ) as mock_usb_serial_by_id:
         mock_usb_serial_by_id.side_effect = lambda x: x
         yield mock_usb_serial_by_id
@@ -24,18 +25,21 @@ def mock_zha():
         MagicMock()
     )
 
-    with patch(
-        "homeassistant.components.zha.radio_manager.ZhaRadioManager._connect_zigpy_app",
-        return_value=mock_connect_app,
-    ), patch(
-        "homeassistant.components.zha.async_setup_entry",
-        return_value=True,
+    with (
+        patch(
+            "homeassistant.components.zha.radio_manager.ZhaRadioManager.connect_zigpy_app",
+            return_value=mock_connect_app,
+        ),
+        patch(
+            "homeassistant.components.zha.async_setup_entry",
+            return_value=True,
+        ),
     ):
         yield
 
 
 @pytest.fixture(autouse=True)
-def mock_zha_get_last_network_settings() -> Generator[None, None, None]:
+def mock_zha_get_last_network_settings() -> Generator[None]:
     """Mock zha.api.async_get_last_network_settings."""
 
     with patch(
@@ -149,3 +153,21 @@ def start_addon_fixture():
         "homeassistant.components.hassio.addon_manager.async_start_addon"
     ) as start_addon:
         yield start_addon
+
+
+@pytest.fixture(name="stop_addon")
+def stop_addon_fixture():
+    """Mock stop add-on."""
+    with patch(
+        "homeassistant.components.hassio.addon_manager.async_stop_addon"
+    ) as stop_addon:
+        yield stop_addon
+
+
+@pytest.fixture(name="uninstall_addon")
+def uninstall_addon_fixture():
+    """Mock uninstall add-on."""
+    with patch(
+        "homeassistant.components.hassio.addon_manager.async_uninstall_addon"
+    ) as uninstall_addon:
+        yield uninstall_addon

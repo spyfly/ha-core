@@ -1,24 +1,25 @@
 """The tests for YoLink device triggers."""
+
 import pytest
+from pytest_unordered import unordered
 from yolink.const import ATTR_DEVICE_DIMMER, ATTR_DEVICE_SMART_REMOTER
 
 from homeassistant.components import automation
 from homeassistant.components.device_automation import DeviceAutomationType
 from homeassistant.components.yolink import DOMAIN, YOLINK_EVENT
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
 
 from tests.common import (
     MockConfigEntry,
-    assert_lists_same,
     async_get_device_automations,
     async_mock_service,
 )
 
 
 @pytest.fixture
-def calls(hass: HomeAssistant):
+def calls(hass: HomeAssistant) -> list[ServiceCall]:
     """Track calls to a mock service."""
     return async_mock_service(hass, "yolink", "automation")
 
@@ -96,7 +97,7 @@ async def test_get_triggers(
     triggers = await async_get_device_automations(
         hass, DeviceAutomationType.TRIGGER, device_entry.id
     )
-    assert_lists_same(triggers, expected_triggers)
+    assert triggers == unordered(expected_triggers)
 
 
 async def test_get_triggers_exception(
@@ -115,11 +116,11 @@ async def test_get_triggers_exception(
     triggers = await async_get_device_automations(
         hass, DeviceAutomationType.TRIGGER, device_entity.id
     )
-    assert_lists_same(triggers, expected_triggers)
+    assert triggers == unordered(expected_triggers)
 
 
 async def test_if_fires_on_event(
-    hass: HomeAssistant, calls, device_registry: dr.DeviceRegistry
+    hass: HomeAssistant, calls: list[ServiceCall], device_registry: dr.DeviceRegistry
 ) -> None:
     """Test for event triggers firing."""
     mac_address = "12:34:56:AB:CD:EF"
@@ -154,7 +155,7 @@ async def test_if_fires_on_event(
         },
     )
 
-    device = device_registry.async_get_device(set(), {connection})
+    device = device_registry.async_get_device(connections={connection})
     assert device is not None
     # Fake remote button long press.
     hass.bus.async_fire(

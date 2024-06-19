@@ -85,7 +85,7 @@ class MockDevices:
             )
 
             for device in [
-                self._devices[addr] for addr in [addr1, addr2, addr3, addr4, addr5]
+                self._devices[addr] for addr in (addr1, addr2, addr3, addr4, addr5)
             ]:
                 device.async_read_config = AsyncMock()
                 device.aldb.async_write = AsyncMock()
@@ -105,7 +105,7 @@ class MockDevices:
                 )
 
             for device in [
-                self._devices[addr] for addr in [addr2, addr3, addr4, addr5]
+                self._devices[addr] for addr in (addr2, addr3, addr4, addr5)
             ]:
                 device.async_status = AsyncMock()
             self._devices[addr1].async_status = AsyncMock(side_effect=AttributeError)
@@ -151,11 +151,11 @@ class MockDevices:
             for flag in operating_flags:
                 value = operating_flags[flag]
                 if device.operating_flags.get(flag):
-                    device.operating_flags[flag].load(value)
+                    device.operating_flags[flag].set_value(value)
             for flag in properties:
                 value = properties[flag]
                 if device.properties.get(flag):
-                    device.properties[flag].load(value)
+                    device.properties[flag].set_value(value)
 
     async def async_add_device(self, address=None, multiple=False):
         """Mock the async_add_device method."""

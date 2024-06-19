@@ -1,16 +1,22 @@
 """The tests for the Owntracks device tracker."""
+
+import base64
 import json
+import pickle
 from unittest.mock import patch
 
+from nacl.encoding import Base64Encoder
+from nacl.secret import SecretBox
 import pytest
 
 from homeassistant.components import owntracks
+from homeassistant.components.device_tracker.legacy import Device
 from homeassistant.const import STATE_NOT_HOME
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
-from tests.common import MockConfigEntry, async_fire_mqtt_message, mock_coro
-from tests.typing import ClientSessionGenerator
+from tests.common import MockConfigEntry, async_fire_mqtt_message
+from tests.typing import ClientSessionGenerator, MqttMockHAClient
 
 USER = "greg"
 DEVICE = "phone"
@@ -279,11 +285,15 @@ BAD_MESSAGE = {"_type": "unsupported", "tst": 1}
 BAD_JSON_PREFIX = "--$this is bad json#--"
 BAD_JSON_SUFFIX = "** and it ends here ^^"
 
-# pylint: disable=invalid-name, len-as-condition
+# pylint: disable=len-as-condition
 
 
 @pytest.fixture
-def setup_comp(hass, mock_device_tracker_conf, mqtt_mock):
+def setup_comp(
+    hass: HomeAssistant,
+    mock_device_tracker_conf: list[Device],
+    mqtt_mock: MqttMockHAClient,
+):
     """Initialize components."""
     hass.loop.run_until_complete(async_setup_component(hass, "device_tracker", {}))
 
@@ -310,8 +320,6 @@ def context(hass, setup_comp):
     """Set up the mocked context."""
     orig_context = owntracks.OwnTracksContext
     context = None
-
-    # pylint: disable=no-value-for-parameter
 
     def store_context(*args):
         """Store the context."""
@@ -965,7 +973,7 @@ async def test_mobile_exit_move_beacon(hass: HomeAssistant, context) -> None:
 async def test_mobile_multiple_async_enter_exit(hass: HomeAssistant, context) -> None:
     """Test the multiple entering."""
     # Test race condition
-    for _ in range(0, 20):
+    for _ in range(20):
         async_fire_mqtt_message(
             hass, EVENT_TOPIC, json.dumps(MOBILE_BEACON_ENTER_EVENT_MESSAGE)
         )
@@ -1305,7 +1313,7 @@ async def test_not_implemented_message(hass: HomeAssistant, context) -> None:
     """Handle not implemented message type."""
     patch_handler = patch(
         "homeassistant.components.owntracks.messages.async_handle_not_impl_msg",
-        return_value=mock_coro(False),
+        return_value=False,
     )
     patch_handler.start()
     assert not await send_message(hass, LWT_TOPIC, LWT_MESSAGE)
@@ -1316,7 +1324,7 @@ async def test_unsupported_message(hass: HomeAssistant, context) -> None:
     """Handle not implemented message type."""
     patch_handler = patch(
         "homeassistant.components.owntracks.messages.async_handle_unsupported_msg",
-        return_value=mock_coro(False),
+        return_value=False,
     )
     patch_handler.start()
     assert not await send_message(hass, BAD_TOPIC, BAD_MESSAGE)
@@ -1328,23 +1336,14 @@ def generate_ciphers(secret):
     # PyNaCl ciphertext generation will fail if the module
     # cannot be imported. However, the test for decryption
     # also relies on this library and won't be run without it.
-    import base64
-    import pickle
+    keylen = SecretBox.KEY_SIZE
+    key = secret.encode("utf-8")
+    key = key[:keylen]
+    key = key.ljust(keylen, b"\0")
 
-    try:
-        from nacl.encoding import Base64Encoder
-        from nacl.secret import SecretBox
+    msg = json.dumps(DEFAULT_LOCATION_MESSAGE).encode("utf-8")
 
-        keylen = SecretBox.KEY_SIZE
-        key = secret.encode("utf-8")
-        key = key[:keylen]
-        key = key.ljust(keylen, b"\0")
-
-        msg = json.dumps(DEFAULT_LOCATION_MESSAGE).encode("utf-8")
-
-        ctxt = SecretBox(key).encrypt(msg, encoder=Base64Encoder).decode("utf-8")
-    except (ImportError, OSError):
-        ctxt = ""
+    ctxt = SecretBox(key).encrypt(msg, encoder=Base64Encoder).decode("utf-8")
 
     mctxt = base64.b64encode(
         pickle.dumps(
@@ -1379,12 +1378,9 @@ def mock_cipher():
 
     def mock_decrypt(ciphertext, key):
         """Decrypt/unpickle."""
-        import base64
-        import pickle
-
         (mkey, plaintext) = pickle.loads(base64.b64decode(ciphertext))
         if key != mkey:
-            raise ValueError()
+            raise ValueError
         return plaintext
 
     return len(TEST_SECRET_KEY), mock_decrypt
@@ -1395,7 +1391,7 @@ def config_context(hass, setup_comp):
     """Set up the mocked context."""
     patch_load = patch(
         "homeassistant.components.device_tracker.async_load_config",
-        return_value=mock_coro([]),
+        return_value=[],
     )
     patch_load.start()
 
@@ -1502,12 +1498,6 @@ async def test_encrypted_payload_no_topic_key(hass: HomeAssistant, setup_comp) -
 
 async def test_encrypted_payload_libsodium(hass: HomeAssistant, setup_comp) -> None:
     """Test sending encrypted message payload."""
-    try:
-        import nacl  # noqa: F401 pylint: disable=unused-import
-    except (ImportError, OSError):
-        pytest.skip("PyNaCl/libsodium is not installed")
-        return
-
     await setup_owntracks(hass, {CONF_SECRET: TEST_SECRET_KEY})
 
     await send_message(hass, LOCATION_TOPIC, ENCRYPTED_LOCATION_MESSAGE)

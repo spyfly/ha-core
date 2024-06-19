@@ -1,9 +1,12 @@
 """Test the ibeacon sensors."""
+
 from datetime import timedelta
 
 import pytest
 
-from homeassistant.components.bluetooth.const import UNAVAILABLE_TRACK_SECONDS
+from homeassistant.components.bluetooth.const import (  # pylint: disable=hass-component-root-import
+    UNAVAILABLE_TRACK_SECONDS,
+)
 from homeassistant.components.ibeacon.const import DOMAIN, UPDATE_INTERVAL
 from homeassistant.components.sensor import ATTR_STATE_CLASS
 from homeassistant.const import (
@@ -33,7 +36,7 @@ from tests.components.bluetooth import (
 
 
 @pytest.fixture(autouse=True)
-def mock_bluetooth(enable_bluetooth):
+def mock_bluetooth(enable_bluetooth: None) -> None:
     """Auto mock bluetooth."""
 
 
@@ -56,7 +59,7 @@ async def test_sensors_updates_fixed_mac_address(hass: HomeAssistant) -> None:
     assert distance_sensor.state == "2"
     assert (
         distance_attributes[ATTR_FRIENDLY_NAME]
-        == "BlueCharm_177999 8105 Estimated Distance"
+        == "BlueCharm_177999 8105 Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"
@@ -70,7 +73,7 @@ async def test_sensors_updates_fixed_mac_address(hass: HomeAssistant) -> None:
     assert distance_sensor.state == "0"
     assert (
         distance_attributes[ATTR_FRIENDLY_NAME]
-        == "BlueCharm_177999 8105 Estimated Distance"
+        == "BlueCharm_177999 8105 Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"
@@ -97,7 +100,7 @@ async def test_sensors_updates_fixed_mac_address(hass: HomeAssistant) -> None:
     assert distance_sensor.state == "14"
     assert (
         distance_attributes[ATTR_FRIENDLY_NAME]
-        == "BlueCharm_177999 8105 Estimated Distance"
+        == "BlueCharm_177999 8105 Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"
@@ -204,7 +207,7 @@ async def test_multiple_uuids_same_beacon(hass: HomeAssistant) -> None:
     distance_attributes = distance_sensor.attributes
     assert distance_sensor.state == "400"
     assert (
-        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated Distance"
+        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"
@@ -217,7 +220,7 @@ async def test_multiple_uuids_same_beacon(hass: HomeAssistant) -> None:
     distance_attributes = distance_sensor.attributes
     assert distance_sensor.state == "0"
     assert (
-        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated Distance"
+        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"
@@ -230,7 +233,7 @@ async def test_multiple_uuids_same_beacon(hass: HomeAssistant) -> None:
     distance_attributes = distance_sensor.attributes
     assert distance_sensor.state == "400"
     assert (
-        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated Distance"
+        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"
@@ -239,7 +242,7 @@ async def test_multiple_uuids_same_beacon(hass: HomeAssistant) -> None:
     distance_attributes = distance_sensor.attributes
     assert distance_sensor.state == "0"
     assert (
-        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated Distance"
+        distance_attributes[ATTR_FRIENDLY_NAME] == "FSC-BP108 EEFF Estimated distance"
     )
     assert distance_attributes[ATTR_UNIT_OF_MEASUREMENT] == "m"
     assert distance_attributes[ATTR_STATE_CLASS] == "measurement"

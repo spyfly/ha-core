@@ -1,4 +1,5 @@
 """Test configuration and mocks for LCN component."""
+
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +12,7 @@ import pytest
 from homeassistant.components.lcn.const import DOMAIN
 from homeassistant.components.lcn.helpers import generate_unique_id
 from homeassistant.const import CONF_HOST
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
 
@@ -67,18 +69,17 @@ def create_config_entry(name):
 
     title = entry_data[CONF_HOST]
     unique_id = fixture_filename
-    entry = MockConfigEntry(
+    return MockConfigEntry(
         domain=DOMAIN,
         title=title,
         unique_id=unique_id,
         data=entry_data,
         options=options,
     )
-    return entry
 
 
 @pytest.fixture
-def calls(hass):
+def calls(hass: HomeAssistant) -> list[ServiceCall]:
     """Track calls to a mock service."""
     return async_mock_service(hass, "test", "automation")
 
@@ -128,6 +129,6 @@ def get_device(hass, entry, address):
     """Get LCN device for specified address."""
     device_registry = dr.async_get(hass)
     identifiers = {(DOMAIN, generate_unique_id(entry.entry_id, address))}
-    device = device_registry.async_get_device(identifiers)
+    device = device_registry.async_get_device(identifiers=identifiers)
     assert device
     return device

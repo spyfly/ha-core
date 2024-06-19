@@ -1,9 +1,10 @@
 """Support for THOMSON routers."""
+
 from __future__ import annotations
 
 import logging
 import re
-import telnetlib
+import telnetlib  # pylint: disable=deprecated-module
 
 import voluptuous as vol
 
@@ -106,10 +107,10 @@ class ThomsonDeviceScanner(DeviceScanner):
             telnet.write(b"exit\r\n")
         except EOFError:
             _LOGGER.exception("Unexpected response from router")
-            return
+            return None
         except ConnectionRefusedError:
             _LOGGER.exception("Connection refused by router. Telnet enabled?")
-            return
+            return None
 
         devices = {}
         for device in devices_result:

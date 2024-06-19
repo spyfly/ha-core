@@ -1,4 +1,5 @@
 """Group platform for notify component."""
+
 from __future__ import annotations
 
 import asyncio
@@ -33,12 +34,12 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 
 
 def add_defaults(
-    input_data: dict[str, Any], default_data: dict[str, Any]
+    input_data: dict[str, Any], default_data: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Deep update a dictionary with default values."""
     for key, val in default_data.items():
         if isinstance(val, Mapping):
-            input_data[key] = add_defaults(input_data.get(key, {}), val)  # type: ignore[arg-type]
+            input_data[key] = add_defaults(input_data.get(key, {}), val)
         elif key not in input_data:
             input_data[key] = val
     return input_data
@@ -66,7 +67,7 @@ class GroupNotifyPlatform(BaseNotificationService):
         payload: dict[str, Any] = {ATTR_MESSAGE: message}
         payload.update({key: val for key, val in kwargs.items() if val})
 
-        tasks: list[asyncio.Task[bool | None]] = []
+        tasks: list[asyncio.Task[Any]] = []
         for entity in self.entities:
             sending_payload = deepcopy(payload.copy())
             if (default_data := entity.get(ATTR_DATA)) is not None:
@@ -74,7 +75,7 @@ class GroupNotifyPlatform(BaseNotificationService):
             tasks.append(
                 asyncio.create_task(
                     self.hass.services.async_call(
-                        DOMAIN, entity[ATTR_SERVICE], sending_payload
+                        DOMAIN, entity[ATTR_SERVICE], sending_payload, blocking=True
                     )
                 )
             )

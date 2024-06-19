@@ -10,7 +10,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import collection, entity_registry as er, restore_state
 
 from .const import DOMAIN
-from .pipeline import PipelineData, PipelineStorageCollection
+from .pipeline import AssistDevice, PipelineData, PipelineStorageCollection
+from .vad import VadSensitivity
 
 OPTION_PREFERRED = "preferred"
 
@@ -38,6 +39,25 @@ def get_chosen_pipeline(
     )
 
 
+@callback
+def get_vad_sensitivity(
+    hass: HomeAssistant, domain: str, unique_id_prefix: str
+) -> VadSensitivity:
+    """Get the chosen vad sensitivity for a domain."""
+    ent_reg = er.async_get(hass)
+    sensitivity_entity_id = ent_reg.async_get_entity_id(
+        Platform.SELECT, domain, f"{unique_id_prefix}-vad_sensitivity"
+    )
+    if sensitivity_entity_id is None:
+        return VadSensitivity.DEFAULT
+
+    state = hass.states.get(sensitivity_entity_id)
+    if state is None:
+        return VadSensitivity.DEFAULT
+
+    return VadSensitivity(state.state)
+
+
 class AssistPipelineSelect(SelectEntity, restore_state.RestoreEntity):
     """Entity to represent a pipeline selector."""
 
@@ -50,8 +70,10 @@ class AssistPipelineSelect(SelectEntity, restore_state.RestoreEntity):
     _attr_current_option = OPTION_PREFERRED
     _attr_options = [OPTION_PREFERRED]
 
-    def __init__(self, hass: HomeAssistant, unique_id_prefix: str) -> None:
+    def __init__(self, hass: HomeAssistant, domain: str, unique_id_prefix: str) -> None:
         """Initialize a pipeline selector."""
+        self._domain = domain
+        self._unique_id_prefix = unique_id_prefix
         self._attr_unique_id = f"{unique_id_prefix}-pipeline"
         self.hass = hass
         self._update_options()
@@ -71,12 +93,15 @@ class AssistPipelineSelect(SelectEntity, restore_state.RestoreEntity):
             self._attr_current_option = state.state
 
         if self.registry_entry and (device_id := self.registry_entry.device_id):
-            pipeline_data.pipeline_devices.add(device_id)
-            self.async_on_remove(
-                lambda: pipeline_data.pipeline_devices.discard(
-                    device_id  # type: ignore[arg-type]
-                )
+            pipeline_data.pipeline_devices[device_id] = AssistDevice(
+                self._domain, self._unique_id_prefix
             )
+
+            def cleanup() -> None:
+                """Clean up registered device."""
+                pipeline_data.pipeline_devices.pop(device_id)
+
+            self.async_on_remove(cleanup)
 
     async def async_select_option(self, option: str) -> None:
         """Select an option."""
@@ -84,7 +109,7 @@ class AssistPipelineSelect(SelectEntity, restore_state.RestoreEntity):
         self.async_write_ha_state()
 
     async def _pipelines_updated(
-        self, change_sets: Iterable[collection.CollectionChangeSet]
+        self, change_set: Iterable[collection.CollectionChange]
     ) -> None:
         """Handle pipeline update."""
         self._update_options()
@@ -102,3 +127,34 @@ class AssistPipelineSelect(SelectEntity, restore_state.RestoreEntity):
 
         if self._attr_current_option not in options:
             self._attr_current_option = OPTION_PREFERRED
+
+
+class VadSensitivitySelect(SelectEntity, restore_state.RestoreEntity):
+    """Entity to represent VAD sensitivity."""
+
+    entity_description = SelectEntityDescription(
+        key="vad_sensitivity",
+        translation_key="vad_sensitivity",
+        entity_category=EntityCategory.CONFIG,
+    )
+    _attr_should_poll = False
+    _attr_current_option = VadSensitivity.DEFAULT.value
+    _attr_options = [vs.value for vs in VadSensitivity]
+
+    def __init__(self, hass: HomeAssistant, unique_id_prefix: str) -> None:
+        """Initialize a pipeline selector."""
+        self._attr_unique_id = f"{unique_id_prefix}-vad_sensitivity"
+        self.hass = hass
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to Home Assistant."""
+        await super().async_added_to_hass()
+
+        state = await self.async_get_last_state()
+        if state is not None and state.state in self.options:
+            self._attr_current_option = state.state
+
+    async def async_select_option(self, option: str) -> None:
+        """Select an option."""
+        self._attr_current_option = option
+        self.async_write_ha_state()

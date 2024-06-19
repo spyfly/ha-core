@@ -1,4 +1,5 @@
 """Tests for gree component."""
+
 from unittest.mock import patch
 
 from greeclimate.exceptions import DeviceTimeoutError
@@ -60,13 +61,12 @@ async def test_registry_settings(
         ENTITY_ID_XFAN,
     ],
 )
-async def test_send_switch_on(
-    hass: HomeAssistant, entity, entity_registry_enabled_by_default: None
-) -> None:
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_send_switch_on(hass: HomeAssistant, entity: str) -> None:
     """Test for sending power on command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_ON,
         {ATTR_ENTITY_ID: entity},
@@ -88,15 +88,16 @@ async def test_send_switch_on(
         ENTITY_ID_XFAN,
     ],
 )
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_send_switch_on_device_timeout(
-    hass: HomeAssistant, device, entity, entity_registry_enabled_by_default: None
+    hass: HomeAssistant, device, entity: str
 ) -> None:
     """Test for sending power on command to the device with a device timeout."""
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_ON,
         {ATTR_ENTITY_ID: entity},
@@ -118,13 +119,12 @@ async def test_send_switch_on_device_timeout(
         ENTITY_ID_XFAN,
     ],
 )
-async def test_send_switch_off(
-    hass: HomeAssistant, entity, entity_registry_enabled_by_default: None
-) -> None:
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_send_switch_off(hass: HomeAssistant, entity: str) -> None:
     """Test for sending power on command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_OFF,
         {ATTR_ENTITY_ID: entity},
@@ -146,14 +146,13 @@ async def test_send_switch_off(
         ENTITY_ID_XFAN,
     ],
 )
-async def test_send_switch_toggle(
-    hass: HomeAssistant, entity, entity_registry_enabled_by_default: None
-) -> None:
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_send_switch_toggle(hass: HomeAssistant, entity: str) -> None:
     """Test for sending power on command to the device."""
     await async_setup_gree(hass)
 
     # Turn the service on first
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_ON,
         {ATTR_ENTITY_ID: entity},
@@ -165,7 +164,7 @@ async def test_send_switch_toggle(
     assert state.state == STATE_ON
 
     # Toggle it off
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TOGGLE,
         {ATTR_ENTITY_ID: entity},
@@ -177,7 +176,7 @@ async def test_send_switch_toggle(
     assert state.state == STATE_OFF
 
     # Toggle is back on
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TOGGLE,
         {ATTR_ENTITY_ID: entity},

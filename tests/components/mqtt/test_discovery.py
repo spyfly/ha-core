@@ -1,4 +1,5 @@
 """The tests for the MQTT discovery."""
+
 import asyncio
 import copy
 import json
@@ -7,7 +8,6 @@ import re
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
-from voluptuous import MultipleInvalid
 
 from homeassistant import config_entries
 from homeassistant.components import mqtt
@@ -15,7 +15,13 @@ from homeassistant.components.mqtt.abbreviations import (
     ABBREVIATIONS,
     DEVICE_ABBREVIATIONS,
 )
-from homeassistant.components.mqtt.discovery import async_start
+from homeassistant.components.mqtt.discovery import (
+    MQTT_DISCOVERY_DONE,
+    MQTT_DISCOVERY_NEW,
+    MQTT_DISCOVERY_UPDATED,
+    MQTTDiscoveryPayload,
+    async_start,
+)
 from homeassistant.const import (
     EVENT_STATE_CHANGED,
     STATE_ON,
@@ -26,8 +32,13 @@ from homeassistant.const import (
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.dispatcher import (
+    async_dispatcher_connect,
+    async_dispatcher_send,
+)
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 from homeassistant.setup import async_setup_component
+from homeassistant.util.signal_type import SignalTypeFormat
 
 from .test_common import help_all_subscribe_calls, help_test_unload_config_entry
 
@@ -35,7 +46,8 @@ from tests.common import (
     MockConfigEntry,
     async_capture_events,
     async_fire_mqtt_message,
-    mock_entity_platform,
+    mock_config_flow,
+    mock_platform,
 )
 from tests.typing import (
     MqttMockHAClientGenerator,
@@ -68,7 +80,6 @@ async def test_subscribing_config_topic(
     assert discovery_topic + "/+/+/+/config" in topics
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 @pytest.mark.parametrize(
     ("topic", "log"),
     [
@@ -102,7 +113,6 @@ async def test_invalid_topic(
         caplog.clear()
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_invalid_json(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -121,6 +131,49 @@ async def test_invalid_json(
         await hass.async_block_till_done()
         assert "Unable to parse JSON" in caplog.text
         assert not mock_dispatcher_send.called
+
+
+@pytest.mark.parametrize(
+    "domain", ["tag", "device_automation", Platform.SENSOR, Platform.LIGHT]
+)
+@pytest.mark.no_fail_on_log_exception
+async def test_discovery_schema_error(
+    hass: HomeAssistant,
+    mqtt_mock_entry: MqttMockHAClientGenerator,
+    caplog: pytest.LogCaptureFixture,
+    domain: Platform | str,
+) -> None:
+    """Test unexpected error JSON config."""
+    with patch(
+        f"homeassistant.components.mqtt.{domain}.DISCOVERY_SCHEMA",
+        side_effect=AttributeError("Attribute abc not found"),
+    ):
+        await mqtt_mock_entry()
+        async_fire_mqtt_message(
+            hass,
+            f"homeassistant/{domain}/bla/config",
+            '{"name": "Beer", "some_topic": "bla"}',
+        )
+        await hass.async_block_till_done()
+        assert "AttributeError: Attribute abc not found" in caplog.text
+
+
+async def test_invalid_config(
+    hass: HomeAssistant,
+    mqtt_mock_entry: MqttMockHAClientGenerator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test sending in JSON that violates the platform schema."""
+    await mqtt_mock_entry()
+    async_fire_mqtt_message(
+        hass,
+        "homeassistant/alarm_control_panel/bla/config",
+        '{"name": "abc", "state_topic": "home/alarm", '
+        '"command_topic": "home/alarm/set", '
+        '"qos": "some_invalid_value"}',
+    )
+    await hass.async_block_till_done()
+    assert "Error 'expected int for dictionary value @ data['qos']'" in caplog.text
 
 
 async def test_only_valid_components(
@@ -148,7 +201,6 @@ async def test_only_valid_components(
     assert not mock_dispatcher_send.called
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_correct_config_discovery(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -169,7 +221,79 @@ async def test_correct_config_discovery(
     assert ("binary_sensor", "bla") in hass.data["mqtt"].discovery_already_discovered
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.FAN])
+async def test_discovery_integration_info(
+    hass: HomeAssistant,
+    mqtt_mock_entry: MqttMockHAClientGenerator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test logging discovery of new and updated items."""
+    await mqtt_mock_entry()
+    async_fire_mqtt_message(
+        hass,
+        "homeassistant/binary_sensor/bla/config",
+        '{ "name": "Beer", "state_topic": "test-topic", "o": {"name": "bla2mqtt", "sw": "1.0" } }',
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("binary_sensor.beer")
+
+    assert state is not None
+    assert state.name == "Beer"
+
+    assert (
+        "Found new component: binary_sensor bla from external application bla2mqtt, version: 1.0"
+        in caplog.text
+    )
+    caplog.clear()
+
+    # Send an update and add support url
+    async_fire_mqtt_message(
+        hass,
+        "homeassistant/binary_sensor/bla/config",
+        '{ "name": "Milk", "state_topic": "test-topic", "o": {"name": "bla2mqtt", "sw": "1.1", "url": "https://bla2mqtt.example.com/support" } }',
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("binary_sensor.beer")
+
+    assert state is not None
+    assert state.name == "Milk"
+
+    assert (
+        "Component has already been discovered: binary_sensor bla, sending update from external application bla2mqtt, version: 1.1, support URL: https://bla2mqtt.example.com/support"
+        in caplog.text
+    )
+
+
+@pytest.mark.parametrize(
+    "config_message",
+    [
+        '{ "name": "Beer", "state_topic": "test-topic", "o": "bla2mqtt" }',
+        '{ "name": "Beer", "state_topic": "test-topic", "o": 2.0 }',
+        '{ "name": "Beer", "state_topic": "test-topic", "o": null }',
+        '{ "name": "Beer", "state_topic": "test-topic", "o": {"sw": "bla2mqtt"} }',
+    ],
+)
+async def test_discovery_with_invalid_integration_info(
+    hass: HomeAssistant,
+    mqtt_mock_entry: MqttMockHAClientGenerator,
+    caplog: pytest.LogCaptureFixture,
+    config_message: str,
+) -> None:
+    """Test sending in correct JSON."""
+    await mqtt_mock_entry()
+    async_fire_mqtt_message(
+        hass,
+        "homeassistant/binary_sensor/bla/config",
+        config_message,
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("binary_sensor.beer")
+
+    assert state is None
+    assert "Unable to parse origin information from discovery message" in caplog.text
+
+
 async def test_discover_fan(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -190,7 +314,6 @@ async def test_discover_fan(
     assert ("fan", "bla") in hass.data["mqtt"].discovery_already_discovered
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.CLIMATE])
 async def test_discover_climate(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -214,7 +337,6 @@ async def test_discover_climate(
     assert ("climate", "bla") in hass.data["mqtt"].discovery_already_discovered
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.ALARM_CONTROL_PANEL])
 async def test_discover_alarm_control_panel(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -362,11 +484,11 @@ async def test_discover_alarm_control_panel(
             "vacuum",
         ),
         (
-            "homeassistant/vacuum/object/bla/config",
-            '{ "name": "Hello World 17", "obj_id": "hello_id", "state_topic": "test-topic", "schema": "legacy" }',
-            "vacuum.hello_id",
+            "homeassistant/valve/object/bla/config",
+            '{ "name": "Hello World 17", "obj_id": "hello_id", "state_topic": "test-topic" }',
+            "valve.hello_id",
             "Hello World 17",
-            "vacuum",
+            "valve",
         ),
         (
             "homeassistant/lock/object/bla/config",
@@ -405,7 +527,6 @@ async def test_discovery_with_object_id(
     assert (domain, "object bla") in hass.data["mqtt"].discovery_already_discovered
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_discovery_incl_nodeid(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -428,7 +549,6 @@ async def test_discovery_incl_nodeid(
     ].discovery_already_discovered
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_non_duplicate_discovery(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -457,7 +577,6 @@ async def test_non_duplicate_discovery(
     assert "Component has already been discovered: binary_sensor bla" in caplog.text
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_removal(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -479,7 +598,6 @@ async def test_removal(
     assert state is None
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_rediscover(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -510,7 +628,6 @@ async def test_rediscover(
     assert state is not None
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_rapid_rediscover(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -563,7 +680,6 @@ async def test_rapid_rediscover(
     assert events[4].data["old_state"] is None
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_rapid_rediscover_unique(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -626,7 +742,6 @@ async def test_rapid_rediscover_unique(
     assert events[3].data["old_state"] is None
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_rapid_reconfigure(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -682,7 +797,6 @@ async def test_rapid_reconfigure(
     assert events[2].data["new_state"].attributes["friendly_name"] == "Wine"
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 async def test_duplicate_removal(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -713,7 +827,7 @@ async def test_cleanup_device(
     entity_registry: er.EntityRegistry,
     mqtt_mock_entry: MqttMockHAClientGenerator,
 ) -> None:
-    """Test discvered device is cleaned up when entry removed from device."""
+    """Test discovered device is cleaned up when entry removed from device."""
     mqtt_mock = await mqtt_mock_entry()
     assert await async_setup_component(hass, "config", {})
     ws_client = await hass_ws_client(hass)
@@ -728,47 +842,40 @@ async def test_cleanup_device(
     await hass.async_block_till_done()
 
     # Verify device and registry entries are created
-    device_entry = device_registry.async_get_device({("mqtt", "0AFFD2")})
+    device_entry = device_registry.async_get_device(identifiers={("mqtt", "0AFFD2")})
     assert device_entry is not None
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
     assert entity_entry is not None
 
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is not None
 
     # Remove MQTT from the device
     mqtt_config_entry = hass.config_entries.async_entries(mqtt.DOMAIN)[0]
-    await ws_client.send_json(
-        {
-            "id": 6,
-            "type": "config/device_registry/remove_config_entry",
-            "config_entry_id": mqtt_config_entry.entry_id,
-            "device_id": device_entry.id,
-        }
+    response = await ws_client.remove_device(
+        device_entry.id, mqtt_config_entry.entry_id
     )
-    response = await ws_client.receive_json()
     assert response["success"]
     await hass.async_block_till_done()
     await hass.async_block_till_done()
 
     # Verify device and registry entries are cleared
-    device_entry = device_registry.async_get_device({("mqtt", "0AFFD2")})
+    device_entry = device_registry.async_get_device(identifiers={("mqtt", "0AFFD2")})
     assert device_entry is None
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
     assert entity_entry is None
 
     # Verify state is removed
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is None
     await hass.async_block_till_done()
 
     # Verify retained discovery topic has been cleared
     mqtt_mock.async_publish.assert_called_once_with(
-        "homeassistant/sensor/bla/config", "", 0, True
+        "homeassistant/sensor/bla/config", None, 0, True
     )
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SENSOR])
 async def test_cleanup_device_mqtt(
     hass: HomeAssistant,
     device_registry: dr.DeviceRegistry,
@@ -787,12 +894,12 @@ async def test_cleanup_device_mqtt(
     await hass.async_block_till_done()
 
     # Verify device and registry entries are created
-    device_entry = device_registry.async_get_device({("mqtt", "0AFFD2")})
+    device_entry = device_registry.async_get_device(identifiers={("mqtt", "0AFFD2")})
     assert device_entry is not None
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
     assert entity_entry is not None
 
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is not None
 
     async_fire_mqtt_message(hass, "homeassistant/sensor/bla/config", "")
@@ -800,13 +907,13 @@ async def test_cleanup_device_mqtt(
     await hass.async_block_till_done()
 
     # Verify device and registry entries are cleared
-    device_entry = device_registry.async_get_device({("mqtt", "0AFFD2")})
+    device_entry = device_registry.async_get_device(identifiers={("mqtt", "0AFFD2")})
     assert device_entry is None
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
     assert entity_entry is None
 
     # Verify state is removed
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is None
     await hass.async_block_till_done()
 
@@ -814,7 +921,6 @@ async def test_cleanup_device_mqtt(
     mqtt_mock.async_publish.assert_not_called()
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SENSOR])
 async def test_cleanup_device_multiple_config_entries(
     hass: HomeAssistant,
     hass_ws_client: WebSocketGenerator,
@@ -867,30 +973,24 @@ async def test_cleanup_device_multiple_config_entries(
 
     # Verify device and registry entries are created
     device_entry = device_registry.async_get_device(
-        set(), {("mac", "12:34:56:AB:CD:EF")}
+        connections={("mac", "12:34:56:AB:CD:EF")}
     )
     assert device_entry is not None
-    assert device_entry.config_entries == {
-        mqtt_config_entry.entry_id,
+    assert device_entry.config_entries == [
         config_entry.entry_id,
-    }
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
+        mqtt_config_entry.entry_id,
+    ]
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
     assert entity_entry is not None
 
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is not None
 
     # Remove MQTT from the device
     mqtt_config_entry = hass.config_entries.async_entries(mqtt.DOMAIN)[0]
-    await ws_client.send_json(
-        {
-            "id": 6,
-            "type": "config/device_registry/remove_config_entry",
-            "config_entry_id": mqtt_config_entry.entry_id,
-            "device_id": device_entry.id,
-        }
+    response = await ws_client.remove_device(
+        device_entry.id, mqtt_config_entry.entry_id
     )
-    response = await ws_client.receive_json()
     assert response["success"]
 
     await hass.async_block_till_done()
@@ -898,24 +998,24 @@ async def test_cleanup_device_multiple_config_entries(
 
     # Verify device is still there but entity is cleared
     device_entry = device_registry.async_get_device(
-        set(), {("mac", "12:34:56:AB:CD:EF")}
+        connections={("mac", "12:34:56:AB:CD:EF")}
     )
     assert device_entry is not None
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
-    assert device_entry.config_entries == {config_entry.entry_id}
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
+    assert device_entry.config_entries == [config_entry.entry_id]
     assert entity_entry is None
 
     # Verify state is removed
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is None
     await hass.async_block_till_done()
 
     # Verify retained discovery topic has been cleared
     mqtt_mock.async_publish.assert_has_calls(
         [
-            call("homeassistant/sensor/bla/config", "", 0, True),
-            call("homeassistant/tag/bla/config", "", 0, True),
-            call("homeassistant/device_automation/bla/config", "", 0, True),
+            call("homeassistant/sensor/bla/config", None, 0, True),
+            call("homeassistant/tag/bla/config", None, 0, True),
+            call("homeassistant/device_automation/bla/config", None, 0, True),
         ],
         any_order=True,
     )
@@ -967,17 +1067,17 @@ async def test_cleanup_device_multiple_config_entries_mqtt(
 
     # Verify device and registry entries are created
     device_entry = device_registry.async_get_device(
-        set(), {("mac", "12:34:56:AB:CD:EF")}
+        connections={("mac", "12:34:56:AB:CD:EF")}
     )
     assert device_entry is not None
-    assert device_entry.config_entries == {
-        mqtt_config_entry.entry_id,
+    assert device_entry.config_entries == [
         config_entry.entry_id,
-    }
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
+        mqtt_config_entry.entry_id,
+    ]
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
     assert entity_entry is not None
 
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is not None
 
     # Send MQTT messages to remove
@@ -990,15 +1090,15 @@ async def test_cleanup_device_multiple_config_entries_mqtt(
 
     # Verify device is still there but entity is cleared
     device_entry = device_registry.async_get_device(
-        set(), {("mac", "12:34:56:AB:CD:EF")}
+        connections={("mac", "12:34:56:AB:CD:EF")}
     )
     assert device_entry is not None
-    entity_entry = entity_registry.async_get("sensor.mqtt_sensor")
-    assert device_entry.config_entries == {config_entry.entry_id}
+    entity_entry = entity_registry.async_get("sensor.none_mqtt_sensor")
+    assert device_entry.config_entries == [config_entry.entry_id]
     assert entity_entry is None
 
     # Verify state is removed
-    state = hass.states.get("sensor.mqtt_sensor")
+    state = hass.states.get("sensor.none_mqtt_sensor")
     assert state is None
     await hass.async_block_till_done()
 
@@ -1006,7 +1106,6 @@ async def test_cleanup_device_multiple_config_entries_mqtt(
     mqtt_mock.async_publish.assert_not_called()
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SWITCH])
 async def test_discovery_expansion(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1069,7 +1168,6 @@ async def test_discovery_expansion(
     assert state and state.state == STATE_UNAVAILABLE
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SWITCH])
 async def test_discovery_expansion_2(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1114,8 +1212,6 @@ async def test_discovery_expansion_2(
     assert state.state == STATE_UNKNOWN
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SWITCH])
-@pytest.mark.no_fail_on_log_exception
 async def test_discovery_expansion_3(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1146,10 +1242,7 @@ async def test_discovery_expansion_3(
     assert hass.states.get("switch.DiscoveryExpansionTest1") is None
     # Make sure the malformed availability data does not trip up discovery by asserting
     # there are schema valdiation errors in the log
-    assert (
-        "voluptuous.error.MultipleInvalid: expected a dictionary @ data['availability'][0]"
-        in caplog.text
-    )
+    assert "expected a dictionary @ data['availability'][0]" in caplog.text
 
 
 async def test_discovery_expansion_without_encoding_and_value_template_1(
@@ -1203,7 +1296,6 @@ async def test_discovery_expansion_without_encoding_and_value_template_1(
     assert state and state.state == STATE_UNAVAILABLE
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SWITCH])
 async def test_discovery_expansion_without_encoding_and_value_template_2(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1255,22 +1347,8 @@ async def test_discovery_expansion_without_encoding_and_value_template_2(
 
 ABBREVIATIONS_WHITE_LIST = [
     # MQTT client/server/trigger settings
-    "CONF_BIRTH_MESSAGE",
-    "CONF_BROKER",
-    "CONF_CERTIFICATE",
-    "CONF_CLIENT_CERT",
-    "CONF_CLIENT_ID",
-    "CONF_CLIENT_KEY",
-    "CONF_DISCOVERY",
-    "CONF_DISCOVERY_ID",
-    "CONF_DISCOVERY_PREFIX",
-    "CONF_EMBEDDED",
-    "CONF_KEEPALIVE",
-    "CONF_TLS_INSECURE",
-    "CONF_TRANSPORT",
-    "CONF_WILL_MESSAGE",
-    "CONF_WS_PATH",
-    "CONF_WS_HEADERS",
+    # Integration info
+    "CONF_SUPPORT_URL",
     # Undocumented device configuration
     "CONF_DEPRECATED_VIA_HUB",
     "CONF_VIA_DEVICE",
@@ -1288,6 +1366,14 @@ ABBREVIATIONS_WHITE_LIST = [
     "CONF_WHITE_VALUE",
 ]
 
+EXCLUDED_MODULES = {
+    "const.py",
+    "config.py",
+    "config_flow.py",
+    "device_trigger.py",
+    "trigger.py",
+}
+
 
 async def test_missing_discover_abbreviations(
     hass: HomeAssistant,
@@ -1298,26 +1384,21 @@ async def test_missing_discover_abbreviations(
     missing = []
     regex = re.compile(r"(CONF_[a-zA-Z\d_]*) *= *[\'\"]([a-zA-Z\d_]*)[\'\"]")
     for fil in Path(mqtt.__file__).parent.rglob("*.py"):
-        if fil.name == "trigger.py":
+        if fil.name in EXCLUDED_MODULES:
             continue
         with open(fil, encoding="utf-8") as file:
             matches = re.findall(regex, file.read())
-            for match in matches:
-                if (
-                    match[1] not in ABBREVIATIONS.values()
-                    and match[1] not in DEVICE_ABBREVIATIONS.values()
-                    and match[0] not in ABBREVIATIONS_WHITE_LIST
-                ):
-                    missing.append(
-                        "{}: no abbreviation for {} ({})".format(
-                            fil, match[1], match[0]
-                        )
-                    )
+            missing.extend(
+                f"{fil}: no abbreviation for {match[1]} ({match[0]})"
+                for match in matches
+                if match[1] not in ABBREVIATIONS.values()
+                and match[1] not in DEVICE_ABBREVIATIONS.values()
+                and match[0] not in ABBREVIATIONS_WHITE_LIST
+            )
 
     assert not missing
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SWITCH])
 async def test_no_implicit_state_topic_switch(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1342,7 +1423,6 @@ async def test_no_implicit_state_topic_switch(
     assert state and state.state == STATE_UNKNOWN
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.BINARY_SENSOR])
 @pytest.mark.parametrize(
     "mqtt_config_entry_data",
     [
@@ -1374,7 +1454,6 @@ async def test_complex_discovery_topic_prefix(
     ].discovery_already_discovered
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [])
 @patch("homeassistant.components.mqtt.client.INITIAL_SUBSCRIBE_COOLDOWN", 0.0)
 @patch("homeassistant.components.mqtt.client.SUBSCRIBE_COOLDOWN", 0.0)
 @patch("homeassistant.components.mqtt.client.UNSUBSCRIBE_COOLDOWN", 0.0)
@@ -1385,7 +1464,7 @@ async def test_mqtt_integration_discovery_subscribe_unsubscribe(
 ) -> None:
     """Check MQTT integration discovery subscribe and unsubscribe."""
     mqtt_mock = await mqtt_mock_entry()
-    mock_entity_platform(hass, "config_flow.comp", None)
+    mock_platform(hass, "comp.config_flow", None)
 
     entry = hass.config_entries.async_entries("mqtt")[0]
     mqtt_mock().connected = True
@@ -1395,6 +1474,7 @@ async def test_mqtt_integration_discovery_subscribe_unsubscribe(
         return_value={"comp": ["comp/discovery/#"]},
     ):
         await async_start(hass, "homeassistant", entry)
+        await hass.async_block_till_done()
         await hass.async_block_till_done()
         await hass.async_block_till_done()
 
@@ -1408,24 +1488,23 @@ async def test_mqtt_integration_discovery_subscribe_unsubscribe(
             """Test mqtt step."""
             return self.async_abort(reason="already_configured")
 
-    with patch.dict(config_entries.HANDLERS, {"comp": TestFlow}):
-        await asyncio.sleep(0.1)
-        assert ("comp/discovery/#", 0) in help_all_subscribe_calls(mqtt_client_mock)
-        assert not mqtt_client_mock.unsubscribe.called
+    assert not mqtt_client_mock.unsubscribe.called
 
+    wait_unsub = asyncio.Event()
+
+    def _mock_unsubscribe(topics: list[str]) -> tuple[int, int]:
+        wait_unsub.set()
+        return (0, 0)
+
+    with (
+        mock_config_flow("comp", TestFlow),
+        patch.object(mqtt_client_mock, "unsubscribe", side_effect=_mock_unsubscribe),
+    ):
         async_fire_mqtt_message(hass, "comp/discovery/bla/config", "")
-        await asyncio.sleep(0.1)
-        await hass.async_block_till_done()
+        await wait_unsub.wait()
         mqtt_client_mock.unsubscribe.assert_called_once_with(["comp/discovery/#"])
-        mqtt_client_mock.unsubscribe.reset_mock()
-
-        async_fire_mqtt_message(hass, "comp/discovery/bla/config", "")
-        await asyncio.sleep(0.1)
-        await hass.async_block_till_done()
-        assert not mqtt_client_mock.unsubscribe.called
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [])
 @patch("homeassistant.components.mqtt.client.INITIAL_SUBSCRIBE_COOLDOWN", 0.0)
 @patch("homeassistant.components.mqtt.client.SUBSCRIBE_COOLDOWN", 0.0)
 @patch("homeassistant.components.mqtt.client.UNSUBSCRIBE_COOLDOWN", 0.0)
@@ -1436,7 +1515,7 @@ async def test_mqtt_discovery_unsubscribe_once(
 ) -> None:
     """Check MQTT integration discovery unsubscribe once."""
     mqtt_mock = await mqtt_mock_entry()
-    mock_entity_platform(hass, "config_flow.comp", None)
+    mock_platform(hass, "comp.config_flow", None)
 
     entry = hass.config_entries.async_entries("mqtt")[0]
     mqtt_mock().connected = True
@@ -1448,6 +1527,7 @@ async def test_mqtt_discovery_unsubscribe_once(
         await async_start(hass, "homeassistant", entry)
         await hass.async_block_till_done()
         await hass.async_block_till_done()
+        await hass.async_block_till_done()
 
     assert ("comp/discovery/#", 0) in help_all_subscribe_calls(mqtt_client_mock)
     assert not mqtt_client_mock.unsubscribe.called
@@ -1457,9 +1537,10 @@ async def test_mqtt_discovery_unsubscribe_once(
 
         async def async_step_mqtt(self, discovery_info: MqttServiceInfo) -> FlowResult:
             """Test mqtt step."""
+            await asyncio.sleep(0.1)
             return self.async_abort(reason="already_configured")
 
-    with patch.dict(config_entries.HANDLERS, {"comp": TestFlow}):
+    with mock_config_flow("comp", TestFlow):
         async_fire_mqtt_message(hass, "comp/discovery/bla/config", "")
         async_fire_mqtt_message(hass, "comp/discovery/bla/config", "")
         await asyncio.sleep(0.1)
@@ -1468,7 +1549,6 @@ async def test_mqtt_discovery_unsubscribe_once(
         mqtt_client_mock.unsubscribe.assert_called_once_with(["comp/discovery/#"])
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SENSOR])
 async def test_clear_config_topic_disabled_entity(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1479,13 +1559,12 @@ async def test_clear_config_topic_disabled_entity(
     mqtt_mock = await mqtt_mock_entry()
     # discover an entity that is not enabled by default
     config = {
-        "name": "sbfspot_12345",
         "state_topic": "homeassistant_test/sensor/sbfspot_0/sbfspot_12345/",
         "unique_id": "sbfspot_12345",
         "enabled_by_default": False,
         "device": {
             "identifiers": ["sbfspot_12345"],
-            "name": "sbfspot_12345",
+            "name": "abc123",
             "sw_version": "1.0",
             "connections": [["mac", "12:34:56:AB:CD:EF"]],
         },
@@ -1517,13 +1596,13 @@ async def test_clear_config_topic_disabled_entity(
     await hass.async_block_till_done()
     assert "Platform mqtt does not generate unique IDs" in caplog.text
 
-    assert hass.states.get("sensor.sbfspot_12345") is None  # disabled
-    assert hass.states.get("sensor.sbfspot_12345_1") is not None  # enabled
-    assert hass.states.get("sensor.sbfspot_12345_2") is None  # not unique
+    assert hass.states.get("sensor.abc123_sbfspot_12345") is None  # disabled
+    assert hass.states.get("sensor.abc123_sbfspot_12345_1") is not None  # enabled
+    assert hass.states.get("sensor.abc123_sbfspot_12345_2") is None  # not unique
 
     # Verify device is created
     device_entry = device_registry.async_get_device(
-        set(), {("mac", "12:34:56:AB:CD:EF")}
+        connections={("mac", "12:34:56:AB:CD:EF")}
     )
     assert device_entry is not None
 
@@ -1535,16 +1614,15 @@ async def test_clear_config_topic_disabled_entity(
     # Assert all valid discovery topics are cleared
     assert mqtt_mock.async_publish.call_count == 2
     assert (
-        call("homeassistant/sensor/sbfspot_0/sbfspot_12345/config", "", 0, True)
+        call("homeassistant/sensor/sbfspot_0/sbfspot_12345/config", None, 0, True)
         in mqtt_mock.async_publish.mock_calls
     )
     assert (
-        call("homeassistant/sensor/sbfspot_0/sbfspot_12345_1/config", "", 0, True)
+        call("homeassistant/sensor/sbfspot_0/sbfspot_12345_1/config", None, 0, True)
         in mqtt_mock.async_publish.mock_calls
     )
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SENSOR])
 async def test_clean_up_registry_monitoring(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1589,7 +1667,7 @@ async def test_clean_up_registry_monitoring(
 
     # Verify device is created
     device_entry = device_registry.async_get_device(
-        set(), {("mac", "12:34:56:AB:CD:EF")}
+        connections={("mac", "12:34:56:AB:CD:EF")}
     )
     assert device_entry is not None
 
@@ -1599,7 +1677,6 @@ async def test_clean_up_registry_monitoring(
     assert len(hooks) == 0
 
 
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SENSOR])
 async def test_unique_id_collission_has_priority(
     hass: HomeAssistant,
     mqtt_mock_entry: MqttMockHAClientGenerator,
@@ -1608,13 +1685,12 @@ async def test_unique_id_collission_has_priority(
     """Test the unique_id collision detection has priority over registry disabled items."""
     await mqtt_mock_entry()
     config = {
-        "name": "sbfspot_12345",
         "state_topic": "homeassistant_test/sensor/sbfspot_0/sbfspot_12345/",
         "unique_id": "sbfspot_12345",
         "enabled_by_default": False,
         "device": {
             "identifiers": ["sbfspot_12345"],
-            "name": "sbfspot_12345",
+            "name": "abc123",
             "sw_version": "1.0",
             "connections": [["mac", "12:34:56:AB:CD:EF"]],
         },
@@ -1638,17 +1714,15 @@ async def test_unique_id_collission_has_priority(
     )
     await hass.async_block_till_done()
 
-    assert hass.states.get("sensor.sbfspot_12345_1") is None  # not enabled
-    assert hass.states.get("sensor.sbfspot_12345_2") is None  # not unique
+    assert hass.states.get("sensor.abc123_sbfspot_12345_1") is None  # not enabled
+    assert hass.states.get("sensor.abc123_sbfspot_12345_2") is None  # not unique
 
     # Verify the first entity is created
-    assert entity_registry.async_get("sensor.sbfspot_12345_1") is not None
+    assert entity_registry.async_get("sensor.abc123_sbfspot_12345_1") is not None
     # Verify the second entity is not created because it is not unique
-    assert entity_registry.async_get("sensor.sbfspot_12345_2") is None
+    assert entity_registry.async_get("sensor.abc123_sbfspot_12345_2") is None
 
 
-@pytest.mark.xfail(raises=MultipleInvalid)
-@patch("homeassistant.components.mqtt.PLATFORMS", [Platform.SENSOR])
 async def test_update_with_bad_config_not_breaks_discovery(
     hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
 ) -> None:
@@ -1700,3 +1774,33 @@ async def test_update_with_bad_config_not_breaks_discovery(
 
     state = hass.states.get("sensor.sbfspot_12345")
     assert state and state.state == "new_value"
+
+
+@pytest.mark.parametrize(
+    "signal_message",
+    [
+        MQTT_DISCOVERY_NEW,
+        MQTT_DISCOVERY_UPDATED,
+        MQTT_DISCOVERY_DONE,
+    ],
+)
+async def test_discovery_dispatcher_signal_type_messages(
+    hass: HomeAssistant, signal_message: SignalTypeFormat[MQTTDiscoveryPayload]
+) -> None:
+    """Test discovery dispatcher messages."""
+
+    domain_id_tuple = ("sensor", "very_unique")
+    test_data = {"name": "test", "state_topic": "test-topic"}
+    calls = []
+
+    def _callback(*args) -> None:
+        calls.append(*args)
+
+    unsub = async_dispatcher_connect(
+        hass, signal_message.format(*domain_id_tuple), _callback
+    )
+    async_dispatcher_send(hass, signal_message.format(*domain_id_tuple), test_data)
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+    assert calls[0] == test_data
+    unsub()

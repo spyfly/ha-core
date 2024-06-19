@@ -1,4 +1,6 @@
 """PyTest fixtures and test helpers."""
+
+from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, PropertyMock, patch
 
@@ -37,14 +39,14 @@ def setup_product_mock(category, feature_mocks, path=None):
     return product_mock
 
 
-def mock_only_feature(spec, **kwargs):
+def mock_only_feature(spec, set_spec: bool = True, **kwargs):
     """Mock just the feature, without the product setup."""
-    return mock.create_autospec(spec, True, True, **kwargs)
+    return mock.create_autospec(spec, set_spec, True, **kwargs)
 
 
-def mock_feature(category, spec, **kwargs):
+def mock_feature(category, spec, set_spec: bool = True, **kwargs):
     """Mock a feature along with whole product setup."""
-    feature_mock = mock_only_feature(spec, **kwargs)
+    feature_mock = mock_only_feature(spec, set_spec, **kwargs)
     feature_mock.async_update = AsyncMock()
     product = setup_product_mock(category, [feature_mock])
 
@@ -70,7 +72,7 @@ def config_fixture():
 
 
 @pytest.fixture(name="feature")
-def feature_fixture(request):
+def feature_fixture(request: pytest.FixtureRequest) -> Any:
     """Return an entity wrapper from given fixture name."""
     return request.getfixturevalue(request.param)
 

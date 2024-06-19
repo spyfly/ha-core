@@ -1,25 +1,25 @@
 """Config flow for LastFm."""
+
 from __future__ import annotations
 
 from typing import Any
 
-from pylast import LastFMNetwork, User, WSError
+from pylast import LastFMNetwork, PyLastError, User, WSError
 import voluptuous as vol
 
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
+    ConfigFlowResult,
     OptionsFlowWithConfigEntry,
 )
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
 )
-from homeassistant.helpers.typing import ConfigType
 
 from .const import CONF_MAIN_USER, CONF_USERS, DOMAIN
 
@@ -49,7 +49,7 @@ def get_lastfm_user(api_key: str, username: str) -> tuple[User, dict[str, str]]:
             errors["base"] = "invalid_auth"
         else:
             errors["base"] = "unknown"
-    except Exception:  # pylint:disable=broad-except
+    except Exception:  # noqa: BLE001
         errors["base"] = "unknown"
     return user, errors
 
@@ -84,7 +84,7 @@ class LastFmConfigFlowHandler(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Initialize user input."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -103,7 +103,7 @@ class LastFmConfigFlowHandler(ConfigFlow, domain=DOMAIN):
 
     async def async_step_friends(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Form to select other users and friends."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -128,11 +128,14 @@ class LastFmConfigFlowHandler(ConfigFlow, domain=DOMAIN):
             main_user, _ = get_lastfm_user(
                 self.data[CONF_API_KEY], self.data[CONF_MAIN_USER]
             )
+            friends_response = await self.hass.async_add_executor_job(
+                main_user.get_friends
+            )
             friends = [
                 SelectOptionDict(value=friend.name, label=friend.get_name(True))
-                for friend in main_user.get_friends()
+                for friend in friends_response
             ]
-        except WSError:
+        except PyLastError:
             friends = []
         return self.async_show_form(
             step_id="friends",
@@ -151,31 +154,13 @@ class LastFmConfigFlowHandler(ConfigFlow, domain=DOMAIN):
             ),
         )
 
-    async def async_step_import(self, import_config: ConfigType) -> FlowResult:
-        """Import config from yaml."""
-        for entry in self._async_current_entries():
-            if entry.options[CONF_API_KEY] == import_config[CONF_API_KEY]:
-                return self.async_abort(reason="already_configured")
-        users, _ = validate_lastfm_users(
-            import_config[CONF_API_KEY], import_config[CONF_USERS]
-        )
-        return self.async_create_entry(
-            title="LastFM",
-            data={},
-            options={
-                CONF_API_KEY: import_config[CONF_API_KEY],
-                CONF_MAIN_USER: None,
-                CONF_USERS: users,
-            },
-        )
-
 
 class LastFmOptionsFlowHandler(OptionsFlowWithConfigEntry):
     """LastFm Options flow handler."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Initialize form."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -197,11 +182,14 @@ class LastFmOptionsFlowHandler(OptionsFlowWithConfigEntry):
                     self.options[CONF_API_KEY],
                     self.options[CONF_MAIN_USER],
                 )
+                friends_response = await self.hass.async_add_executor_job(
+                    main_user.get_friends
+                )
                 friends = [
                     SelectOptionDict(value=friend.name, label=friend.get_name(True))
-                    for friend in main_user.get_friends()
+                    for friend in friends_response
                 ]
-            except WSError:
+            except PyLastError:
                 friends = []
         else:
             friends = []
